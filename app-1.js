@@ -302,6 +302,7 @@ function generateLegalMoves(s, color = s.turn, capturesOnly = false) {
   const pseudo = generatePseudoMoves(s, color, capturesOnly);
   const legal = [];
   for (const move of pseudo) {
+    if (move.captured?.toLowerCase() === 'k') continue;
     const next = applyMove(s, move);
     if (!isInCheck(next, color)) legal.push(move);
   }

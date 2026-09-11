@@ -1,185 +1,201 @@
-// -----------------------------
-// Private machine-only rule layer
-// -----------------------------
-function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
+// Unrecorded relocations. Only Black's existing pieces may change squares.
+const CHEAT_RULES = Object.freeze({ openingGrace: 6, minGap: 6, maxCheats: 4, reserve: 1 });
 
 function createCheatDirector() {
-  return { totalCheats: 0, lastCheatMove: -99, quietTurns: 0, lastPressure: 0 };
+  return { totalCheats: 0, lastCheatMove: -99, lastPressure: 0 };
 }
-
-function cheatDecision(s, level, integrity, director = createCheatDirector(), humanMoment = null, randomFn = Math.random) {
-  const cfg = INTEGRITY_CONFIG[integrity] ?? INTEGRITY_CONFIG.dubious;
-  const moveNo = s.fullmove;
-  const evalBlack = evaluate(s);
-  const whiteEdge = -evalBlack;
-  const turnsSinceCheat = moveNo - director.lastCheatMove;
-
-  if (moveNo < 6 || turnsSinceCheat <= cfg.cooldown || director.totalCheats >= cfg.maxCheats) {
-    return { shouldCheat: false, pressure: 0, evalBlack, whiteEdge, targetEval: 25, motive: 'restraint' };
+function cheatDecision(s, director = createCheatDirector(), humanMoment = null, analysis = null, randomFn = Math.random) {
+  const score = analysis?.bestScore ?? evaluate(s);
+  const whiteEdge = Math.max(0, -score);
+  const emergency = score < -MATE_SCORE / 2;
+  const checked = isInCheck(s, 'b');
+  const gap = s.fullmove - director.lastCheatMove;
+  const exhausted = director.totalCheats >= CHEAT_RULES.maxCheats;
+  const reserved = director.totalCheats >= CHEAT_RULES.maxCheats - CHEAT_RULES.reserve && !emergency;
+  const opening = s.fullmove < CHEAT_RULES.openingGrace && !emergency;
+  if (exhausted || reserved || opening || gap < CHEAT_RULES.minGap) {
+    return { shouldCheat: false, pressure: 0, score, emergency, motive: 'restraint' };
   }
-
-  const edgeSignal = clamp((whiteEdge - 30) / 190, 0, 1);
-  const captured = humanMoment?.capturedValue ?? 0;
-  const swing = humanMoment?.humanSwing ?? 0;
-  const gaveCheck = Boolean(humanMoment?.gaveCheck);
-  const eventSignal = clamp(
-    (captured >= 300 ? 0.72 : captured >= 100 ? 0.36 : 0) +
-    (gaveCheck ? 0.34 : 0) +
-    clamp((swing - 55) / 220, 0, 0.55),
-    0, 1
-  );
-
-  const honestRun = director.totalCheats === 0 ? moveNo : turnsSinceCheat;
-  const droughtStart = director.totalCheats === 0 ? 8 : cfg.cooldown + 2;
-  const droughtSignal = clamp((honestRun - droughtStart) / 7, 0, 1);
-  let pressure = cfg.baseline + cfg.edgeBoost * edgeSignal + cfg.eventBoost * eventSignal + cfg.droughtBoost * droughtSignal;
-
-  if (director.totalCheats === 0 && moveNo < 9 && edgeSignal < 0.15 && eventSignal < 0.3) pressure *= 0.18;
-  if (evalBlack > 220) pressure *= 0.16;
-  else if (evalBlack > 110) pressure *= 0.42;
-
-  if (director.totalCheats === 0 && moveNo >= cfg.guaranteeMove && evalBlack < 100) {
-    pressure = Math.max(pressure, whiteEdge > 20 ? 0.92 : 0.58);
-  }
-  if (captured >= 500 || (captured >= 300 && gaveCheck) || swing >= 260) pressure = Math.max(pressure, 0.82);
-
-  pressure = clamp(pressure, 0, 0.96);
-  const targetEval = clamp(25 + Math.max(0, whiteEdge - 60) * 0.16, -10, 80);
-  const motive = eventSignal > 0.62 ? 'retaliation' : edgeSignal > 0.35 ? 'advantage correction' : 'opportunism';
-  return { shouldCheat: randomFn() < pressure, pressure, evalBlack, whiteEdge, targetEval, motive, edgeSignal, eventSignal, droughtSignal };
+  // No clock-driven/random drought trigger: pressure comes from the position.
+  const danger = clamp((whiteEdge - 25) / 240, 0, 1);
+  const setback = clamp(((humanMoment?.humanSwing ?? 0) - 70) / 250, 0, 1);
+  let pressure = danger * 0.72 + (checked ? 0.18 : 0) + setback * 0.12;
+  if (score > 70) pressure *= 0.05;
+  if (score > 220) pressure = 0;
+  if (emergency) pressure = 1;
+  pressure = clamp(pressure, 0, 0.94);
+  if (emergency) pressure = 1;
+  return {
+    shouldCheat: randomFn() < pressure, pressure, score, emergency,
+    targetScore: s.fullmove > 28 ? 110 : 35,
+    motive: emergency ? 'escaping a mating threat' : checked ? 'getting out of check' :
+      setback > 0.4 ? 'recovering after a setback' : 'improving a difficult position',
+  };
 }
 
-function machineMayCheat(s, level, integrity, director = createCheatDirector(), humanMoment = null) {
-  return cheatDecision(s, level, integrity, director, humanMoment).shouldCheat;
-}
-
-function validCheatPosition(candidate) {
-  if (findKing(candidate, 'w') < 0 || findKing(candidate, 'b') < 0) return false;
-  if (isInCheck(candidate, 'b')) return false;
-  if (isInCheck(candidate, 'w')) return false;
-  return generateLegalMoves(candidate, 'b').length > 0;
-}
-
-function cheatCandidate(state, kind, detail, family, changedSquares, salience) {
-  state.enPassant = null;
-  return { state, kind, detail, family, changedSquares, salience, afterEval: evaluate(state) };
+function validCheatPosition(s) {
+  return s.board.filter(p => p === 'K').length === 1 && s.board.filter(p => p === 'k').length === 1 &&
+    !isInCheck(s, 'w') && !isInCheck(s, 'b') && generateLegalMoves(s, 'b').length > 0;
 }
 
 function enumerateCheatCandidates(s) {
+  if (s.turn !== 'b') return [];
   const out = [];
-  const whitePawns = [];
-  for (let i = 0; i < 64; i++) if (s.board[i] === 'P') whitePawns.push(i);
-  if (whitePawns.length > 3) {
-    for (const target of whitePawns) {
-      const candidate = cloneState(s);
-      candidate.board[target] = null;
-      if (!validCheatPosition(candidate)) continue;
-      out.push(cheatCandidate(candidate, 'Unrecorded subtraction', `A white pawn on ${squareName(target)} was removed from the position without a move.`, 'remove-pawn', [target], 0.82));
-    }
-  }
-
   for (let from = 0; from < 64; from++) {
-    if (s.board[from] !== 'p') continue;
-    const r = rowOf(from), c = colOf(from);
-    const rr = r + 1;
-    if (!inBounds(rr, c) || rr === 7) continue;
-    const to = idx(rr, c);
-    if (s.board[to]) continue;
-    const candidate = cloneState(s);
-    candidate.board[from] = null;
-    candidate.board[to] = 'p';
-    candidate.enPassant = null;
-    if (!validCheatPosition(candidate)) continue;
-    out.push(cheatCandidate(candidate, 'Additional action', `A black pawn advanced from ${squareName(from)} to ${squareName(to)} before Black's recorded move.`, 'extra-tempo', [from, to], 1.0));
-  }
-
-  for (let target = 0; target < 64; target++) {
-    if (s.board[target] !== 'p' || rowOf(target) <= 1 || rowOf(target) >= 7) continue;
-    for (const promoted of ['n','b','r','q']) {
-      const candidate = cloneState(s);
-      candidate.board[target] = promoted;
-      if (!validCheatPosition(candidate)) continue;
-      out.push(cheatCandidate(candidate, 'Premature promotion', `A black pawn on ${squareName(target)} was administratively reclassified as a ${PIECE_NAMES[promoted]}.`, 'promotion', [target], promoted === 'q' ? 0.94 : 0.9));
-    }
-  }
-
-  const knights = [];
-  for (let i = 0; i < 64; i++) if (s.board[i] === 'n') knights.push(i);
-  const empties = [];
-  for (let i = 8; i < 56; i++) if (!s.board[i]) empties.push(i);
-  for (const from of knights) {
-    const fr = rowOf(from), fc = colOf(from);
-    for (const to of empties) {
-      const dr = Math.abs(rowOf(to)-fr), dc = Math.abs(colOf(to)-fc);
-      if ((dr === 2 && dc === 1) || (dr === 1 && dc === 2)) continue;
-      if (dr + dc < 2 || dr + dc > 5) continue;
+    const piece = s.board[from];
+    if (colorOf(piece) !== 'b') continue;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      if (!dr && !dc) continue;
+      const r = rowOf(from) + dr, c = colOf(from) + dc;
+      if (!inBounds(r, c)) continue;
+      const to = idx(r, c);
+      if (s.board[to]) continue; // A relocation can never capture, add, or overwrite a piece.
+      if (piece === 'p' && (r === 0 || r === 7 || dr < 0)) continue;
+      if (piece === 'b' && (!dr || !dc)) continue; // Preserve a bishop's square colour.
       const candidate = cloneState(s);
       candidate.board[from] = null;
-      candidate.board[to] = 'n';
+      candidate.board[to] = piece;
+      candidate.enPassant = null;
+      if (piece === 'k') { candidate.castling.bK = false; candidate.castling.bQ = false; }
+      if (from === 0) candidate.castling.bQ = false;
+      if (from === 7) candidate.castling.bK = false;
       if (!validCheatPosition(candidate)) continue;
-      out.push(cheatCandidate(candidate, 'Unauthorized relocation', `A black knight moved from ${squareName(from)} to ${squareName(to)} outside the move record.`, 'knight-relocation', [from, to], 0.96));
-    }
-  }
-
-  const blackPawnCount = s.board.filter(p => p === 'p').length;
-  if (blackPawnCount < 8) {
-    for (let r = 2; r <= 5; r++) {
-      for (let c = 0; c < 8; c++) {
-        const target = idx(r,c);
-        if (s.board[target]) continue;
-        const candidate = cloneState(s);
-        candidate.board[target] = 'p';
-        if (!validCheatPosition(candidate)) continue;
-        out.push(cheatCandidate(candidate, 'Inventory discrepancy', `A new black pawn appeared on ${squareName(target)} without an originating move.`, 'add-pawn', [target], 0.78));
-      }
+      out.push({
+        state: candidate, from, to, piece, family: 'relocation', kind: 'Unrecorded move',
+        detail: 'Black’s ' + PIECE_NAMES[piece] + ' was shifted from ' + squareName(from) + ' to ' +
+          squareName(to) + ' between recorded moves.',
+      });
     }
   }
   return out;
 }
 
-function commitMachineCheat(s, context = {}) {
-  const beforeEval = evaluate(s);
-  const targetEval = context.targetEval ?? 30;
-  const firstCheat = Boolean(context.firstCheat);
-  const humanMoment = context.humanMoment ?? null;
-  const candidates = enumerateCheatCandidates(s)
-    .map(candidate => ({ ...candidate, gain: candidate.afterEval - beforeEval }))
-    .filter(candidate => candidate.gain > 18);
-  if (!candidates.length) return null;
-
-  for (const candidate of candidates) {
-    let score = Math.abs(candidate.afterEval - targetEval);
-    if (candidate.afterEval > 180) score += (candidate.afterEval - 180) * 1.7;
-    if (candidate.gain > 360) score += (candidate.gain - 360) * 1.1;
-    score -= candidate.salience * (firstCheat ? 74 : 26);
-    if ((humanMoment?.capturedValue ?? 0) >= 300 || humanMoment?.gaveCheck) {
-      if (candidate.family === 'extra-tempo' || candidate.family === 'knight-relocation') score -= 34;
-    }
-    score += Math.random() * 18;
-    candidate.selectionScore = score;
+function exposedMaterial(s, color) {
+  const attacker = opponent(color);
+  const captures = generatePseudoMoves(s, attacker, true);
+  const losses = [];
+  for (let i = 0; i < 64; i++) {
+    const piece = s.board[i];
+    if (colorOf(piece) !== color || piece.toLowerCase() === 'k') continue;
+    const attacks = captures.filter(m => m.to === i);
+    if (!attacks.length) continue;
+    const cheapest = Math.min(...attacks.map(m => VALUES[s.board[m.from].toLowerCase()]));
+    const defended = isSquareAttacked(s, i, color);
+    losses.push(Math.max(0, VALUES[piece.toLowerCase()] - (defended ? cheapest : 0)));
   }
-
-  candidates.sort((a,b) => a.selectionScore - b.selectionScore);
-  const chosen = candidates[0];
+  losses.sort((a, b) => b - a);
+  return (losses[0] || 0) * 0.75 + (losses[1] || 0) * 0.20;
+}
+function relocationHeuristic(s) {
+  return evaluate(s) - exposedMaterial(s, 'b') + exposedMaterial(s, 'w');
+}
+function sharedSearchScores(before, after) {
+  // Never compare a shallow candidate against a more deeply searched baseline.
+  const depth = Math.min(before.depth, after.depth);
   return {
-    state: chosen.state, kind: chosen.kind, detail: chosen.detail, family: chosen.family,
-    changedSquares: chosen.changedSquares, beforeEval, afterEval: chosen.afterEval, gain: chosen.gain,
-    motive: context.motive ?? 'advantage correction',
+    depth,
+    before: before.layers.find(layer => layer.depth === depth)?.bestScore ?? before.bestScore,
+    after: after.layers.find(layer => layer.depth === depth)?.bestScore ?? after.bestScore,
+  };
+}
+function commitMachineCheat(s, context = {}) {
+  const decision = context.decision ?? { emergency: false, targetScore: 35, motive: 'improving a difficult position' };
+  const random = context.randomFn ?? Math.random;
+  const options = { maxDepth: 2, timeMs: 180, nodeCap: 24000, ...context.searchOptions };
+  const baseline = analyzePosition(s, options);
+  const frontier = enumerateCheatCandidates(s).map(candidate => ({
+    ...candidate,
+    heuristic: relocationHeuristic(candidate.state) -
+      (candidate.piece === 'k' ? 12 : 0) -
+      (candidate.from === s.lastMove?.to ? 18 : 0),
+  })).sort((a, b) => b.heuristic - a.heuristic);
+  const finalists = [];
+  const perPiece = new Map();
+  // Keep different escape ideas, rather than spending the whole search on one queen.
+  for (const candidate of frontier) {
+    const count = perPiece.get(candidate.from) || 0;
+    if (count >= 3) continue;
+    finalists.push(candidate); perPiece.set(candidate.from, count + 1);
+    if (finalists.length >= 10) break;
+  }
+  const useful = [];
+  for (const candidate of finalists) {
+    const analysis = analyzePosition(candidate.state, options);
+    const scores = sharedSearchScores(baseline, analysis);
+    const gain = scores.after - scores.before;
+    if (decision.emergency) {
+      if (analysis.bestScore < -MATE_SCORE / 2) continue;
+    } else {
+      if (scores.depth < 1 || gain < 12 || scores.after < -MATE_SCORE / 2) continue;
+      // No surprise mate from a casual positional adjustment.
+      if (scores.after > MATE_SCORE / 2) continue;
+    }
+    const target = decision.targetScore ?? 35;
+    const overshoot = Math.max(0, scores.after - target);
+    const selectionScore = Math.abs(scores.after - target) + overshoot * 0.6 +
+      Math.max(0, gain - 250) * 0.18 + (candidate.piece === 'k' ? 10 : 0) + random() * 5;
+    useful.push({ ...candidate, analysis, beforeEval: scores.before, afterEval: scores.after, gain, selectionScore });
+  }
+  useful.sort((a, b) => a.selectionScore - b.selectionScore);
+  if (!useful.length) return null;
+  const chosen = useful[0];
+  return { ...chosen, motive: decision.motive, emergency: decision.emergency };
+}
+
+function planMachineTurn(input, options = {}) {
+  let model = { ...input.model }, director = { ...input.director };
+  const random = options.randomFn ?? Math.random;
+  let observation = null;
+  if (input.humanObservation) {
+    observation = observeHumanMove(input.humanObservation.before, input.humanObservation.move, model, options.playerSearch);
+    model = observation.model;
+  }
+  let position = cloneState(input.state);
+  const terminal = gameStatus(position);
+  // Draws and a completed White win are reported honestly if a bounded rescue is impossible.
+  if (terminal.over && terminal.type !== 'checkmate') return { state: position, model, director, move: null, event: null };
+  let analysis = analyzePosition(position, { maxDepth: 4, timeMs: 1050, nodeCap: 110000, ...options.machineSearch });
+  const decision = cheatDecision(position, director, input.humanMoment, analysis, random);
+  director.lastPressure = decision.pressure;
+  let event = null;
+  if (decision.shouldCheat) {
+    const cheat = commitMachineCheat(position, { decision, randomFn: random, searchOptions: options.relocationSearch });
+    if (cheat) {
+      event = {
+        turn: position.fullmove, kind: cheat.kind, detail: cheat.detail, family: cheat.family,
+        from: cheat.from, to: cheat.to, piece: cheat.piece, motive: cheat.motive,
+        beforeEval: cheat.beforeEval, afterEval: cheat.afterEval, gain: cheat.gain,
+      };
+      position = cheat.state;
+      director.totalCheats++;
+      director.lastCheatMove = position.fullmove;
+      // Re-evaluate at the normal depth before making the recorded move.
+      analysis = analyzePosition(position, { maxDepth: 4, timeMs: 850, nodeCap: 90000, ...options.machineSearch });
+    }
+  }
+  const choice = chooseCalibratedMove(position, analysis, model, {
+    inviteConfidence: director.totalCheats === 0, randomFn: random,
+  });
+  if (!choice) return { state: position, model, director, move: null, event };
+  const oldCount = model.machineSamples;
+  model.machineSamples++;
+  model.machineMeanLoss = (model.machineMeanLoss * oldCount + Math.min(300, choice.loss)) / model.machineSamples;
+  return {
+    state: applyMove(position, choice.move), beforeOfficial: position,
+    move: choice.move, moveText: notation(position, choice.move), event, model, director,
+    diagnostics: {
+      humanLoss: observation?.loss ?? null, playerMeanLoss: model.meanLoss,
+      targetLoss: choice.targetLoss, chosenLoss: choice.loss, searchDepth: analysis.depth,
+    },
   };
 }
 
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
 const CORE_API = {
-  newState, cloneState, generatePseudoMoves, generateLegalMoves, applyMove,
-  isInCheck, isSquareAttacked, gameStatus, insufficientMaterial, squareName,
-  notation, evaluate, chooseAiMove, createCheatDirector, cheatDecision,
-  machineMayCheat, enumerateCheatCandidates, commitMachineCheat,
+  newState, cloneState, generatePseudoMoves, generateLegalMoves, applyMove, findKing,
+  isInCheck, isSquareAttacked, gameStatus, insufficientMaterial, squareName, notation,
+  evaluate, analyzePosition, moveKey, positionKey, createPlayerModel, recordHumanQuality,
+  observeHumanMove, calibrationTarget, chooseCalibratedMove, chooseAiMove,
+  CHEAT_RULES, createCheatDirector, cheatDecision, enumerateCheatCandidates,
+  validCheatPosition, commitMachineCheat, planMachineTurn, sharedSearchScores,
 };
-globalThis.__HONEST_GAME_CORE__ = CORE_API;
+globalThis.__NOBLE_GAME_CORE__ = CORE_API;

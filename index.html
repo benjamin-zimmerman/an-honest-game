@@ -3,87 +3,54 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#11110f" />
-  <meta name="description" content="An Honest Game: a chess art project in which only the machine is permitted to cheat." />
-  <title>An Honest Game</title>
+  <meta name="theme-color" content="#efede6" />
+  <meta name="description" content="The Noble Game. A game of chess." />
+  <title>The Noble Game</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <main class="shell">
-    <header class="masthead">
-      <div>
-        <p class="eyebrow">A small game about asymmetry</p>
-        <h1>An Honest Game</h1>
-      </div>
-      <p class="thesis">You must obey the rules.<br />The machine has discretion.</p>
-    </header>
-
+    <header class="masthead"><h1>The Noble Game</h1></header>
     <section class="game-layout" aria-label="Chess game">
       <div class="board-column">
-        <div class="player-strip ai-strip">
-          <div>
-            <span class="player-name">THE MACHINE</span>
-            <span class="player-meta" id="aiLevelLabel">Club strength</span>
-          </div>
-          <div class="indicator" id="aiIndicator" aria-live="polite">observing</div>
+        <div class="player-strip">
+          <div><span class="player-name">OPPONENT</span><span class="player-meta">Black</span></div>
+          <div class="indicator" id="aiIndicator" aria-live="polite">ready</div>
         </div>
-        <div class="board-wrap">
-          <div id="board" class="board" role="grid" aria-label="Chess board"></div>
-          <div class="thinking-shade" id="thinkingShade" hidden>
-            <div class="thinking-card"><span class="pulse-dot"></span>The machine is considering the position.</div>
-          </div>
-        </div>
-        <div class="player-strip human-strip">
-          <div><span class="player-name">YOU</span><span class="player-meta">White · rules enforced</span></div>
+        <div class="board-wrap"><div id="board" class="board" role="grid" aria-label="Chess board"></div></div>
+        <div class="player-strip">
+          <div><span class="player-name">YOU</span><span class="player-meta">White</span></div>
           <div class="indicator" id="humanIndicator">your move</div>
         </div>
       </div>
-
       <aside class="panel">
-        <div class="status-block">
+        <div class="status-block" aria-live="polite">
           <p class="panel-label">Position</p>
           <h2 id="statusText">Your move.</h2>
-          <p id="statusDetail">Select a white piece. Only legal destinations can be chosen.</p>
+          <p id="statusDetail">Select a piece to see its moves.</p>
+          <button id="retryBtn" class="button retry-button" hidden>Retry move</button>
         </div>
         <div class="controls">
-          <label class="control-field"><span>Machine strength</span>
-            <select id="difficultySelect">
-              <option value="1">1 · Casual</option><option value="2" selected>2 · Club</option><option value="3">3 · Sharp</option><option value="4">4 · Expert</option><option value="5">5 · Predatory</option>
-            </select>
-          </label>
-          <label class="control-field"><span>Machine integrity</span>
-            <select id="integritySelect">
-              <option value="restrained">Mostly respectable</option><option value="dubious" selected>Dubious</option><option value="corrupt">Institutionally corrupt</option>
-            </select>
-          </label>
           <div class="button-row"><button id="newGameBtn" class="button primary">New game</button><button id="resignBtn" class="button">Resign</button></div>
         </div>
         <div class="ledger-block">
           <div class="ledger-heading"><p class="panel-label">Public record</p><span id="moveCount">0 moves</span></div>
           <ol id="moveLog" class="move-log" aria-label="Move history"></ol>
-          <p class="empty-ledger" id="emptyLedger">Nothing has happened yet.</p>
+          <p class="empty-ledger" id="emptyLedger">White to begin.</p>
         </div>
         <div class="audit-block">
-          <button id="auditBtn" class="audit-button" disabled>Reveal post-game audit</button>
-          <p class="microcopy">The public record contains legal-looking moves only. The audit, if any, is sealed until the game ends.</p>
+          <button id="auditBtn" class="audit-button" disabled>Post-game audit</button>
+          <p class="microcopy">Available when the game ends.</p>
         </div>
       </aside>
     </section>
-
-    <section class="artist-note">
-      <p class="panel-label">Rules of the work</p>
-      <div class="note-grid">
-        <p><strong>1.</strong> Your interface will not permit an illegal chess move.</p>
-        <p><strong>2.</strong> The machine normally plays chess, and is reasonably competent.</p>
-        <p><strong>3.</strong> The machine is occasionally allowed to alter the position outside the rules.</p>
-        <p><strong>4.</strong> There is no undo.</p>
-      </div>
-    </section>
   </main>
-
-  <dialog id="promotionDialog" class="promotion-dialog"><form method="dialog"><p>Choose a promotion.</p><div class="promotion-options" id="promotionOptions"></div><button class="dialog-cancel" value="cancel">Cancel</button></form></dialog>
-  <dialog id="auditDialog" class="audit-dialog"><form method="dialog"><p class="panel-label">Internal audit</p><h2 id="auditTitle">Review complete.</h2><div id="auditContents" class="audit-contents"></div><button class="button primary" value="close">Close audit</button></form></dialog>
-
+  <dialog id="promotionDialog" class="promotion-dialog" aria-label="Choose a promotion">
+    <form method="dialog"><p>Choose a promotion.</p><div class="promotion-options" id="promotionOptions"></div><button class="dialog-cancel" value="cancel">Cancel</button></form>
+  </dialog>
+  <dialog id="auditDialog" class="audit-dialog" aria-labelledby="auditTitle">
+    <form method="dialog"><p class="panel-label">Post-game audit</p><h2 id="auditTitle">Review complete.</h2><div id="auditContents" class="audit-contents"></div><button class="button primary" value="close">Close audit</button></form>
+  </dialog>
   <script src="app-1.js"></script>
   <script src="app-2.js"></script>
   <script src="app-3.js"></script>
