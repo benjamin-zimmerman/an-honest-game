@@ -50,6 +50,7 @@ h1 { margin-bottom: 0; font-size: clamp(2.6rem, 6vw, 5.6rem); font-weight: 500; 
 .coord.rank { left: 5px; top: 3px; }
 .square.dark .coord { color: #f3efe5; }
 .thinking-shade { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: rgba(22, 21, 19, 0.08); backdrop-filter: blur(1px); }
+.thinking-shade[hidden] { display: none; }
 .thinking-card { display: flex; gap: 10px; align-items: center; max-width: 82%; padding: 11px 14px; border: 1px solid rgba(0,0,0,0.16); background: rgba(239, 237, 230, 0.94); box-shadow: 0 8px 30px rgba(0,0,0,0.16); font-size: 0.9rem; }
 .pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink); animation: pulse 0.9s infinite alternate ease-in-out; }
 @keyframes pulse { to { opacity: 0.2; transform: scale(0.72); } }
